@@ -56,3 +56,16 @@ func TestLoadChecksTheTranscriptionProvider(t *testing.T) {
 		t.Errorf("cfg = %+v, err = %v", cfg, err)
 	}
 }
+
+func TestLoadKeepsSpeechToTextOffUnlessEnabled(t *testing.T) {
+	if cfg, err := Load(env(nil)); err != nil || cfg.EnableSTT {
+		t.Fatalf("EnableSTT = %v, err = %v", cfg.EnableSTT, err)
+	}
+	cfg, err := Load(env(map[string]string{"ENABLE_STT": "true"}))
+	if err != nil || !cfg.EnableSTT || cfg.LiveKitRoomURL != "ws://livekit:7880" {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
+	}
+	if _, err := Load(env(map[string]string{"ENABLE_STT": "yes"})); err == nil {
+		t.Error("an unreadable ENABLE_STT was accepted")
+	}
+}

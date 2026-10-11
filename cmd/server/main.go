@@ -23,8 +23,8 @@ import (
 	"github.com/everlearn/video-server/internal/webhook"
 )
 
-// How much audio the placeholder source pretends to gather before each transcription.
-const mockChunkInterval = 6 * time.Second
+// How much audio is gathered before each transcription, which is also how far captions lag behind speech.
+const chunkInterval = 6 * time.Second
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -62,7 +62,7 @@ func run(logger *slog.Logger) error {
 
 	livekit := sfu.NewClient(cfg.LiveKitURL, cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
 	captions := newCaptions(livekit, outbox, logger)
-	pipeline := newPipeline(cfg, captions.publish, logger)
+	pipeline := newPipeline(cfg, livekit, captions.publish, logger)
 	classes := &classroom{
 		rooms:      metrics.NewRooms(outbox),
 		attendance: attendance.NewRecorder(attendance.NewTracker(), outbox, logger),
@@ -82,7 +82,7 @@ func run(logger *slog.Logger) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
-		logger.Info("video-server listening", "port", cfg.Port, "transcription", cfg.TranscriptionProvider)
+		logger.Info("video-server listening", "port", cfg.Port, "transcription", cfg.TranscriptionProvider, "stt", cfg.EnableSTT)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "error", err)
 			stop()
@@ -103,18 +103,27 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
-// newPipeline chooses the speech-to-text adapter from configuration. It returns nil when transcription is off.
-func newPipeline(cfg config.Config, sink transcription.Sink, logger *slog.Logger) *transcription.Pipeline {
+// newPipeline chooses the audio source and the speech-to-text adapter from configuration.
+// It returns nil when there is nothing to transcribe with.
+func newPipeline(cfg config.Config, livekit *sfu.Client, sink transcription.Sink, logger *slog.Logger) *transcription.Pipeline {
 	var stt transcription.SpeechToText
 	switch cfg.TranscriptionProvider {
 	case config.TranscriptionMock:
 		stt = &transcription.MockSpeechToText{}
 	case config.TranscriptionDeepgram:
+		if !cfg.EnableSTT {
+			logger.Warn("transcription is off: Deepgram needs real audio, which needs ENABLE_STT=true")
+			return nil
+		}
 		stt = transcription.NewDeepgram(transcription.DeepgramURL, cfg.DeepgramAPIKey)
 	default:
 		return nil
 	}
-	source := transcription.TimedSource{Interval: mockChunkInterval}
+	// Without ENABLE_STT no room is ever joined: the mock is fed by a timer instead of audio
+	var source transcription.AudioSource = transcription.TimedSource{Interval: chunkInterval}
+	if cfg.EnableSTT {
+		source = sfu.NewListener(livekit, cfg.LiveKitRoomURL, chunkInterval, logger)
+	}
 	return transcription.NewPipeline(source, stt, sink, cfg.TranscriptionLanguage, logger)
 }
 

@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TimedSource stands in for the room audio subscriber, which is not built yet: while a
-// track is open it emits a chunk with no audio every interval. It lets the rest of the
-// pipeline run end to end; a real source would fill Chunk.Audio from the LiveKit track.
+// TimedSource stands in for the room listener when the service may not join rooms: while a
+// track is open it emits a chunk with no audio every interval, so the rest of the pipeline
+// runs end to end without a media connection.
 type TimedSource struct {
 	Interval time.Duration
 }

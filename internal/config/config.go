@@ -17,7 +17,9 @@ const (
 type Config struct {
 	Port string
 	// LiveKitURL is the HTTP address of the LiveKit server API.
-	LiveKitURL       string
+	LiveKitURL string
+	// LiveKitRoomURL is the address participants connect to, as given in LIVEKIT_URL.
+	LiveKitRoomURL   string
 	LiveKitAPIKey    string
 	LiveKitAPISecret string
 	BackendURL       string
@@ -28,6 +30,8 @@ type Config struct {
 	TranscriptionProvider string
 	TranscriptionLanguage string
 	DeepgramAPIKey        string
+	// EnableSTT lets the service join rooms as a hidden participant to hear real audio.
+	EnableSTT bool
 }
 
 // Load reads the configuration through getenv and fails on a missing or inconsistent value.
@@ -50,6 +54,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		Port:                  optional("PORT", "8080"),
 		LiveKitURL:            httpURL(required("LIVEKIT_URL")),
+		LiveKitRoomURL:        getenv("LIVEKIT_URL"),
 		LiveKitAPIKey:         required("LIVEKIT_API_KEY"),
 		LiveKitAPISecret:      required("LIVEKIT_API_SECRET"),
 		BackendURL:            strings.TrimRight(required("BACKEND_INTERNAL_URL"), "/"),
@@ -62,6 +67,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+	switch strings.ToLower(optional("ENABLE_STT", "false")) {
+	case "true", "1":
+		cfg.EnableSTT = true
+	case "false", "0":
+	default:
+		return Config{}, fmt.Errorf("ENABLE_STT must be true or false, got %q", getenv("ENABLE_STT"))
 	}
 	switch cfg.TranscriptionProvider {
 	case TranscriptionOff, TranscriptionMock:
