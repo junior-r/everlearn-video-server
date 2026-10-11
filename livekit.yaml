@@ -6,3 +6,8 @@ rtc:
   use_external_ip: false
 logging:
   level: info
+# Room and participant events go to the video-server, signed with this key's secret
+webhook:
+  api_key: devkey
+  urls:
+    - http://video-server:8080/webhooks/livekit
