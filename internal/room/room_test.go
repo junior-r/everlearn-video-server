@@ -16,3 +16,13 @@ func TestRoomNamesCarryTheSessionID(t *testing.T) {
 		t.Error("IsMembership must accept only UUIDs")
 	}
 }
+
+func TestParseLabsReadsTheCommaSeparatedKeys(t *testing.T) {
+	labs := ParseLabs(" gravity, ,function-grapher,")
+	if len(labs) != 2 || labs[0] != "gravity" || labs[1] != "function-grapher" {
+		t.Fatalf("ParseLabs = %q", labs)
+	}
+	if labs := ParseLabs(""); len(labs) != 0 {
+		t.Fatalf("ParseLabs(\"\") = %q, want none", labs)
+	}
+}

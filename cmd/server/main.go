@@ -17,6 +17,7 @@ import (
 	"github.com/everlearn/video-server/internal/backend"
 	"github.com/everlearn/video-server/internal/chat"
 	"github.com/everlearn/video-server/internal/config"
+	"github.com/everlearn/video-server/internal/lab"
 	"github.com/everlearn/video-server/internal/metrics"
 	"github.com/everlearn/video-server/internal/moderation"
 	"github.com/everlearn/video-server/internal/sfu"
@@ -77,6 +78,7 @@ func run(logger *slog.Logger) error {
 	mux.Handle("POST /webhooks/livekit", webhook.NewHandler(livekit.ReceiveWebhook, classes, logger))
 	messages := chat.NewHandler(livekit, livekit, outbox, []byte(cfg.LiveKitAPISecret), logger)
 	order := moderation.NewHandler(livekit, livekit, logger)
+	labs := lab.NewHandler(livekit, livekit, logger)
 	for path, handler := range map[string]http.HandlerFunc{
 		"/chat":                    messages.ServeHTTP,
 		"/chat/delete":             messages.Delete,
@@ -84,6 +86,8 @@ func run(logger *slog.Logger) error {
 		"/participants/lower-hand": order.LowerHand,
 		"/participants/mute":       order.Mute,
 		"/class/end":               order.End,
+		"/lab":                     labs.Share,
+		"/lab/stop":                labs.Stop,
 	} {
 		mux.Handle(path, browserAccess(cfg.AllowedOrigin, handler))
 	}

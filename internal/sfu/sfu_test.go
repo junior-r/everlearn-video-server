@@ -35,8 +35,14 @@ func roomToken(t *testing.T, key, secret string, grant *auth.VideoGrant, validFo
 // backendToken signs a token the way the NestJS backend does: plain JWT claims, no LiveKit SDK.
 func backendToken(t *testing.T, expiresAt time.Time, role string) string {
 	t.Helper()
+	return backendTokenWith(t, expiresAt, map[string]string{"role": role})
+}
+
+// backendTokenWith signs a backend token carrying the given participant attributes.
+func backendTokenWith(t *testing.T, expiresAt time.Time, attributes map[string]string) string {
+	t.Helper()
 	claims := jwt.MapClaims{
-		"attributes": map[string]string{"role": role},
+		"attributes": attributes,
 		"iss":        apiKey,
 		"sub":        "membership-1",
 		"name":       "Grace Hopper",
@@ -72,6 +78,22 @@ func TestAuthenticateTakesTheTeacherFromTheSignedRoleOnly(t *testing.T) {
 	plain, err := client.Authenticate(roomToken(t, apiKey, apiSecret, admin, time.Minute))
 	if err != nil || plain.Teacher {
 		t.Fatalf("plain = %+v, err = %v", plain, err)
+	}
+}
+
+func TestAuthenticateReadsTheLabsTheTeacherMayShare(t *testing.T) {
+	client := NewClient("http://livekit.invalid", apiKey, apiSecret)
+
+	teacher, err := client.Authenticate(backendTokenWith(t, time.Now().Add(time.Hour), map[string]string{
+		"role": "TEACHER",
+		"labs": "gravity,function-grapher",
+	}))
+	if err != nil || len(teacher.Labs) != 2 || teacher.Labs[0] != "gravity" || teacher.Labs[1] != "function-grapher" {
+		t.Fatalf("teacher = %+v, err = %v", teacher, err)
+	}
+	student, err := client.Authenticate(backendToken(t, time.Now().Add(time.Hour), "STUDENT"))
+	if err != nil || len(student.Labs) != 0 {
+		t.Fatalf("student = %+v, err = %v", student, err)
 	}
 }
 

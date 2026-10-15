@@ -19,6 +19,8 @@ const (
 const (
 	AttributeRole = "role"
 	AttributeHand = "hand"
+	// AttributeLabs lists, comma separated, the labs the backend lets the Teacher share with the class.
+	AttributeLabs = "labs"
 	RoleTeacher   = "TEACHER"
 )
 
@@ -32,6 +34,8 @@ type Member struct {
 	Name     string
 	// Teacher is true for the Teacher giving the class, the only one who may moderate it.
 	Teacher bool
+	// Labs are the keys of the labs this member may share with the room; empty for anyone but the Teacher.
+	Labs []string
 }
 
 // The backend names a session's room "class-<session id>".
@@ -54,4 +58,15 @@ func SessionID(roomName string) (sessionID string, ok bool) {
 // IsMembership reports whether a participant identity is a Membership id.
 func IsMembership(identity string) bool {
 	return uuid.Validate(identity) == nil
+}
+
+// ParseLabs reads the labs attribute: keys separated by commas, blanks left out.
+func ParseLabs(attribute string) []string {
+	var labs []string
+	for _, key := range strings.Split(attribute, ",") {
+		if key = strings.TrimSpace(key); key != "" {
+			labs = append(labs, key)
+		}
+	}
+	return labs
 }
