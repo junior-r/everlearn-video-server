@@ -12,6 +12,8 @@ A small Go service that listens to LiveKit, applies the video business logic, an
 
 - **Webhooks for who is in a class.** Attendance and room lifecycle come from LiveKit's signed webhooks, so they work without any media connection.
 - **Chat goes through this service over HTTP.** The browser posts the message with its room access token; the service takes the sender from the token, publishes the message to the room and captures it. Browsers cannot publish data themselves, so nobody can write as someone else.
+- **Moderation goes through this service too.** A hand, a silenced microphone and the end of a class are requests carrying the same room token. Whether the caller is the Teacher is read from the role the backend signed into that token, never from the request, and browsers hold no LiveKit administration of their own.
+- **Who wrote a chat message is signed, not stored.** Each message carries an HMAC of its room, id and sender. Taking it down sends that back, so the service knows the author without keeping any state.
 - **A Redis outbox between this service and the backend.** Every report is buffered in a Redis list and delivered in order, so a backend restart loses nothing. Reports the backend refuses (unknown session, invalid data) are dropped; anything else is retried.
 - **Speech-to-text behind two ports.** `AudioSource` (audio of a track) and `SpeechToText` (text of a chunk) keep the pipeline independent of both LiveKit and Deepgram.
 - **A hidden participant for audio, behind a switch.** Hearing what is said needs a WebRTC connection, which webhooks cannot give. The service joins the room with the LiveKit server SDK as a hidden agent that subscribes only to microphones. `ENABLE_STT` (default `false`) guards it: while off, no room is ever joined, so a network without media reachability or a missing API key cannot break a class.
@@ -19,19 +21,30 @@ A small Go service that listens to LiveKit, applies the video business logic, an
 
 ## The Implementation
 
-- **HTTP:** `GET /healthz`; `POST /webhooks/livekit` (signature checked with the API secret); `POST /chat` (`Authorization: Bearer <room token>`, body `{ "content" }`, CORS for `ALLOWED_ORIGIN`).
+- **HTTP:** `GET /healthz`; `POST /webhooks/livekit` (signature checked with the API secret); and the browser endpoints below (`Authorization: Bearer <room token>`, CORS for `ALLOWED_ORIGIN`, `401` without a valid token, `403` for a token that may not).
+
+  | Endpoint | Body | Who |
+  | --- | --- | --- |
+  | `POST /chat` | `{ content }` | Any member of the class |
+  | `POST /chat/delete` | `{ id, senderId, signature }` | The author, or the Teacher |
+  | `POST /hand` | `{ raised }` | Any member, for their own hand |
+  | `POST /participants/lower-hand` | `{ identity }` | The Teacher |
+  | `POST /participants/mute` | `{ identity }` | The Teacher |
+  | `POST /class/end` | none | The Teacher |
 - **Names:** a room is `class-<sessionId>` and a participant identity is a `Membership.id`. Rooms and participants that do not fit are ignored.
 - **Packages (`internal/`):**
   - `webhook` — verifies and dispatches `room_started`, `room_finished`, `participant_joined`, `participant_left`, `track_published`, `track_unpublished`.
   - `attendance` — reports each join and leave, and adds up each member's seconds in the session.
   - `metrics` — reports when a room opens and closes.
-  - `chat` — the chat endpoint.
+  - `access` — who a browser request comes from, read from its room token.
+  - `chat` — sending a chat message and taking one down.
+  - `moderation` — hands, silencing a microphone and ending a class.
   - `transcription` — `Pipeline` (one goroutine per open microphone), `Deepgram`, `MockSpeechToText`, `TimedSource` (a timer standing in for audio).
   - `backend` — report bodies, the internal API client and the Redis outbox.
-  - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
+  - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, participant attributes, muting, closing a room, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
   - `room`, `config` — naming rules and environment.
-- **To the room:** data messages on topic `chat` (`id, senderId, senderName, content, sentAt`) and `captions` (`id, speakerId, speakerName, text, startedAt, endedAt`).
-- **To the backend:** `POST /internal/classroom/sessions/:id/{started|finished|participants/joined|participants/left|chat-messages|transcript-segments}` with `X-Internal-Secret`.
+- **To the room:** data messages on topic `chat` (`id, senderId, senderName, content, sentAt, signature`), `chat-deleted` (`id`) and `captions` (`id, speakerId, speakerName, text, startedAt, endedAt`); and the participant attribute `hand` (when it went up, empty when down).
+- **To the backend:** `POST /internal/classroom/sessions/:id/{started|finished|participants/joined|participants/left|chat-messages|chat-messages/deleted|transcript-segments}` with `X-Internal-Secret`.
 - **Config:** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `BACKEND_INTERNAL_URL`, `INTERNAL_SERVICE_SECRET`, `REDIS_URL`, `ALLOWED_ORIGIN`, `TRANSCRIPTION_PROVIDER` (`off` default, `mock`, `deepgram`), `TRANSCRIPTION_LANGUAGE` (`es`), `DEEPGRAM_API_KEY`, `ENABLE_STT` (`false` default).
 - **Transcription modes:**
 
@@ -57,6 +70,8 @@ docker build --target test ./video-server                         # go vet + go 
 - The listener needs a media path to LiveKit. It works inside the local compose network; a deployment where LiveKit advertises an address the service cannot reach leaves captions empty (`microphone not transcribed` in the log) without affecting the class.
 - A listener that loses its room is not reconnected beyond what the SDK retries; captions resume with the next microphone published.
 - Attendance totals are kept in memory for logging; the stored truth is the backend's join and leave rows.
-- Chat has no rate limit and no moderation.
+- Chat and hands have no rate limit. The only moderation is taking a message down.
+- A microphone the Teacher silenced can be opened again by its owner, and nobody can be removed from a class.
+- Chat signatures are made with the LiveKit API secret: rotating it makes the messages of classes in progress impossible to take down.
 - A chat message is shown before it is buffered: if Redis is down at that moment it is logged but not saved.
 - The webhook API key in `livekit.yaml` is the development key; production needs its own file.

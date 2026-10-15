@@ -33,14 +33,15 @@ func roomToken(t *testing.T, key, secret string, grant *auth.VideoGrant, validFo
 }
 
 // backendToken signs a token the way the NestJS backend does: plain JWT claims, no LiveKit SDK.
-func backendToken(t *testing.T, expiresAt time.Time) string {
+func backendToken(t *testing.T, expiresAt time.Time, role string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
-		"iss":   apiKey,
-		"sub":   "membership-1",
-		"name":  "Grace Hopper",
-		"exp":   expiresAt.Unix(),
-		"video": map[string]any{"room": "class-1", "roomJoin": true, "canPublishData": false},
+		"attributes": map[string]string{"role": role},
+		"iss":        apiKey,
+		"sub":        "membership-1",
+		"name":       "Grace Hopper",
+		"exp":        expiresAt.Unix(),
+		"video":      map[string]any{"room": "class-1", "roomJoin": true, "canPublishData": false},
 	}
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(apiSecret))
 	if err != nil {
@@ -52,10 +53,25 @@ func backendToken(t *testing.T, expiresAt time.Time) string {
 func TestAuthenticateReadsTheTokensTheBackendSigns(t *testing.T) {
 	client := NewClient("http://livekit.invalid", apiKey, apiSecret)
 
-	sender, err := client.Authenticate(backendToken(t, time.Now().Add(time.Hour)))
+	sender, err := client.Authenticate(backendToken(t, time.Now().Add(time.Hour), "STUDENT"))
 
-	if err != nil || sender.Room != "class-1" || sender.Identity != "membership-1" || sender.Name != "Grace Hopper" {
+	if err != nil || sender.Room != "class-1" || sender.Identity != "membership-1" || sender.Name != "Grace Hopper" || sender.Teacher {
 		t.Fatalf("sender = %+v, err = %v", sender, err)
+	}
+}
+
+func TestAuthenticateTakesTheTeacherFromTheSignedRoleOnly(t *testing.T) {
+	client := NewClient("http://livekit.invalid", apiKey, apiSecret)
+
+	teacher, err := client.Authenticate(backendToken(t, time.Now().Add(time.Hour), "TEACHER"))
+	if err != nil || !teacher.Teacher {
+		t.Fatalf("teacher = %+v, err = %v", teacher, err)
+	}
+	// A room admin grant alone, with no signed role, moderates nothing
+	admin := &auth.VideoGrant{RoomJoin: true, Room: "class-1", RoomAdmin: true}
+	plain, err := client.Authenticate(roomToken(t, apiKey, apiSecret, admin, time.Minute))
+	if err != nil || plain.Teacher {
+		t.Fatalf("plain = %+v, err = %v", plain, err)
 	}
 }
 
@@ -74,7 +90,7 @@ func TestAuthenticateAcceptsOnlyRoomTokensSignedWithOurSecret(t *testing.T) {
 	refused := map[string]string{
 		"another secret":  roomToken(t, apiKey, "another_secret_that_is_32_chars_long", join, time.Minute),
 		"another API key": roomToken(t, "otherkey", apiSecret, join, time.Minute),
-		"expired":         backendToken(t, time.Now().Add(-time.Hour)),
+		"expired":         backendToken(t, time.Now().Add(-time.Hour), "STUDENT"),
 		"no room":         roomToken(t, apiKey, apiSecret, &auth.VideoGrant{RoomJoin: true}, time.Minute),
 		"no join grant":   roomToken(t, apiKey, apiSecret, &auth.VideoGrant{Room: "class-1"}, time.Minute),
 		"not a token":     "garbage",
