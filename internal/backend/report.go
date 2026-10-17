@@ -66,6 +66,15 @@ func ChatMessage(sessionID, id, senderID, content string, sentAt time.Time) Repo
 	})
 }
 
+// ChatMessageDeleted reports that a message was taken down, by its author or by the Teacher.
+func ChatMessageDeleted(sessionID, id, deletedByID string, at time.Time) Report {
+	return report(sessionID, "chat-messages/deleted", map[string]string{
+		"id":          id,
+		"deletedById": deletedByID,
+		"deletedAt":   stamp(at),
+	})
+}
+
 // TranscriptSegment reports one transcribed stretch of speech.
 func TranscriptSegment(sessionID, id, speakerID, text, language string, startedAt, endedAt time.Time) Report {
 	return report(sessionID, "transcript-segments", map[string]string{
