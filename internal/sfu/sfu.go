@@ -58,6 +58,7 @@ func (c *Client) Authenticate(token string) (room.Member, error) {
 		Identity: grants.Identity,
 		Name:     grants.Name,
 		Teacher:  grants.Attributes[room.AttributeRole] == room.RoleTeacher,
+		Labs:     room.ParseLabs(grants.Attributes[room.AttributeLabs]),
 	}, nil
 }
 
@@ -142,5 +143,15 @@ func (c *Client) Close(ctx context.Context, roomName string) error {
 		return err
 	}
 	_, err = c.rooms.DeleteRoom(ctx, &livekit.DeleteRoomRequest{Room: roomName})
+	return gone(err)
+}
+
+// SetMetadata replaces the metadata of a room, which LiveKit hands to everyone in it and to whoever joins later.
+func (c *Client) SetMetadata(ctx context.Context, roomName, metadata string) error {
+	ctx, err := c.asServer(ctx, &auth.VideoGrant{RoomAdmin: true, Room: roomName})
+	if err != nil {
+		return err
+	}
+	_, err = c.rooms.UpdateRoomMetadata(ctx, &livekit.UpdateRoomMetadataRequest{Room: roomName, Metadata: metadata})
 	return gone(err)
 }
