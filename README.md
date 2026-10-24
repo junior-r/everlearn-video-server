@@ -28,7 +28,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   | --- | --- | --- |
   | `POST /chat` | `{ content }` | Any member of the class |
   | `POST /chat/delete` | `{ id, senderId, signature }` | The author, or the Teacher |
-  | `POST /hand` | `{ raised }` | Any member, for their own hand |
+  | `POST /hand` | `{ raised }` | Any member, for their own hand; sets the `hand` attribute to when it went up (UTC, milliseconds), or clears it |
   | `POST /participants/lower-hand` | `{ identity }` | The Teacher |
   | `POST /participants/mute` | `{ identity }` | The Teacher |
   | `POST /class/end` | none | The Teacher |

@@ -65,7 +65,7 @@ var (
 
 func call(s *stubs, target endpoint, authorization, body string) int {
 	handler := NewHandler(s, s, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	handler.now = func() time.Time { return time.Date(2026, 10, 12, 8, 3, 0, 0, time.UTC) }
+	handler.now = func() time.Time { return time.Date(2026, 10, 12, 8, 3, 0, 250_000_000, time.UTC) }
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	if authorization != "" {
 		request.Header.Set("Authorization", authorization)
@@ -87,7 +87,7 @@ func TestAMemberRaisesAndLowersTheirOwnHand(t *testing.T) {
 	}
 
 	want := []string{
-		"attribute " + classRoom + " " + student + " hand 2026-10-12T08:03:00Z",
+		"attribute " + classRoom + " " + student + " hand 2026-10-12T08:03:00.250Z",
 		"attribute " + classRoom + " " + student + " hand ",
 	}
 	if strings.Join(s.calls, "|") != strings.Join(want, "|") {
