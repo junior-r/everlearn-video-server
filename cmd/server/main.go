@@ -132,6 +132,12 @@ func newPipeline(cfg config.Config, livekit *sfu.Client, sink transcription.Sink
 			return nil
 		}
 		stt = transcription.NewDeepgram(transcription.DeepgramURL, cfg.DeepgramAPIKey)
+	case config.TranscriptionHTTP:
+		if !cfg.EnableSTT {
+			logger.Warn("transcription is off: the HTTP provider needs real audio, which needs ENABLE_STT=true")
+			return nil
+		}
+		stt = transcription.NewHTTPSpeechToText(cfg.TranscriptionHTTPURL, cfg.TranscriptionHTTPToken)
 	default:
 		return nil
 	}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -250,6 +251,53 @@ func TestDeepgramSendsTheAudioAndReadsTheTranscript(t *testing.T) {
 	// No audio is never sent
 	gotBody = "untouched"
 	if text, err = deepgram.Transcribe(context.Background(), Chunk{}, "es"); err != nil || text != "" || gotBody != "untouched" {
+		t.Fatalf("empty chunk: text = %q, err = %v, called = %v", text, err, gotBody != "untouched")
+	}
+}
+
+func TestHTTPSpeechToTextSpeaksTheContract(t *testing.T) {
+	var gotAuth, gotType, gotQuery, gotBody string
+	answer, status := `{"text":" Hola a todos. ","language":"es"}`, http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotAuth, gotType, gotQuery, gotBody = r.Header.Get("Authorization"), r.Header.Get("Content-Type"), r.URL.RawQuery, string(raw)
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, answer)
+	}))
+	defer server.Close()
+	// A query the operator put in the URL is kept beside the language
+	stt := NewHTTPSpeechToText(server.URL+"/api/live/transcribe?model=fast", "avra_token")
+	chunk := Chunk{Audio: []byte("opus-bytes"), ContentType: "audio/ogg"}
+
+	text, err := stt.Transcribe(context.Background(), chunk, "es")
+
+	if err != nil || text != "Hola a todos." {
+		t.Fatalf("text = %q, err = %v", text, err)
+	}
+	if gotAuth != "Bearer avra_token" || gotType != "audio/ogg" || gotBody != "opus-bytes" {
+		t.Fatalf("request: auth %q, type %q, body %q", gotAuth, gotType, gotBody)
+	}
+	if gotQuery != "language=es&model=fast" {
+		t.Fatalf("query = %q", gotQuery)
+	}
+
+	// Silence comes back as empty text, which is not an error
+	answer = `{"text":""}`
+	if text, err = stt.Transcribe(context.Background(), chunk, "es"); err != nil || text != "" {
+		t.Fatalf("silence: text = %q, err = %v", text, err)
+	}
+	// A refusal and an answer without text are errors, and the service's reason is kept for the log
+	answer, status = `{"code":"API_TOKEN_INVALID"}`, http.StatusUnauthorized
+	if _, err = stt.Transcribe(context.Background(), chunk, "es"); err == nil || !strings.Contains(err.Error(), "API_TOKEN_INVALID") {
+		t.Fatalf("refused token: err = %v", err)
+	}
+	answer, status = `{"words":[]}`, http.StatusOK
+	if _, err = stt.Transcribe(context.Background(), chunk, "es"); err == nil {
+		t.Fatal("want an error for an answer without text")
+	}
+	// No audio is never sent
+	gotBody = "untouched"
+	if text, err = stt.Transcribe(context.Background(), Chunk{}, "es"); err != nil || text != "" || gotBody != "untouched" {
 		t.Fatalf("empty chunk: text = %q, err = %v, called = %v", text, err, gotBody != "untouched")
 	}
 }

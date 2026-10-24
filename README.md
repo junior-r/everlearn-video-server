@@ -49,7 +49,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   - `room`, `config` — naming rules and environment.
 - **To the room:** data messages on topic `chat` (`id, senderId, senderName, content, sentAt, signature`), `chat-deleted` (`id`) and `captions` (`id, speakerId, speakerName, text, startedAt, endedAt`); the participant attribute `hand` (when it went up, empty when down); and the room metadata `{ lab: { labKey, state, sharedBy, updatedAt } | null }` (the state is a JSON object of at most 8 KiB).
 - **To the backend:** `POST /internal/classroom/sessions/:id/{started|finished|participants/joined|participants/left|chat-messages|chat-messages/deleted|transcript-segments}` with `X-Internal-Secret`.
-- **Config:** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `BACKEND_INTERNAL_URL`, `INTERNAL_SERVICE_SECRET`, `REDIS_URL`, `ALLOWED_ORIGIN`, `TRANSCRIPTION_PROVIDER` (`off` default, `mock`, `deepgram`), `TRANSCRIPTION_LANGUAGE` (`es`), `DEEPGRAM_API_KEY`, `ENABLE_STT` (`false` default).
+- **Config:** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `BACKEND_INTERNAL_URL`, `INTERNAL_SERVICE_SECRET`, `REDIS_URL`, `ALLOWED_ORIGIN`, `TRANSCRIPTION_PROVIDER` (`off` default, `mock`, `deepgram`, `http`), `TRANSCRIPTION_LANGUAGE` (`es`), `DEEPGRAM_API_KEY`, `TRANSCRIPTION_HTTP_URL` and `TRANSCRIPTION_HTTP_TOKEN` (for `http`), `ENABLE_STT` (`false` default).
 - **Transcription modes:**
 
   | `ENABLE_STT` | `TRANSCRIPTION_PROVIDER` | Result |
@@ -58,7 +58,16 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   | `false` | `mock` | Placeholder captions on a timer; no room is joined. |
   | `false` | `deepgram` | No captions (a warning is logged). |
   | `true` | `mock` | Placeholder captions, one per chunk of real audio: checks the media path without a key. |
-  | `true` | `deepgram` | Real captions. |
+  | `false` | `http` | No captions (a warning is logged). |
+  | `true` | `deepgram` or `http` | Real captions. |
+- **The `http` provider** is any speech-to-text service that speaks this contract, so a new service is a URL and a token, not new code. Avra's `/api/live/transcribe` is the first:
+
+  ```
+  POST <TRANSCRIPTION_HTTP_URL>?language=es
+  Authorization: Bearer <TRANSCRIPTION_HTTP_TOKEN>
+  Content-Type: audio/ogg          (the chunk: 6 s of Opus, as the browser sent it)
+  → 200 {"text": "..."}            (empty text: nothing was said; any other status: logged, chunk skipped)
+  ```
 - **LiveKit side:** `livekit.yaml` lists this service under `webhook.urls`.
 
 ## Running
@@ -70,6 +79,7 @@ docker build --target test ./video-server                         # go vet + go 
 
 ## Known gaps
 
+- **The `http` provider has run for real against Avra** on the local stack: a browser's microphone playing Spanish speech produced the expected captions and stored segments. It has not run against a production Avra over the internet.
 - **Deepgram has never been called for real.** The listener is verified against the local LiveKit (it joins, subscribes and produces Ogg chunks from a browser's microphone), and the Deepgram adapter against a fake server; the two have not run together with a real key.
 - The listener needs a media path to LiveKit. It works inside the local compose network; a deployment where LiveKit advertises an address the service cannot reach leaves captions empty (`microphone not transcribed` in the log) without affecting the class.
 - A listener that loses its room is not reconnected beyond what the SDK retries; captions resume with the next microphone published.
