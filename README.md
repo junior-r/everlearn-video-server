@@ -14,6 +14,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
 - **Chat goes through this service over HTTP.** The browser posts the message with its room access token; the service takes the sender from the token, publishes the message to the room and captures it. Browsers cannot publish data themselves, so nobody can write as someone else.
 - **Moderation goes through this service too.** A hand, a silenced participant (microphone and screen sound) and the end of a class are requests carrying the same room token. Whether the caller is the Teacher is read from the role the backend signed into that token, never from the request, and browsers hold no LiveKit administration of their own.
 - **A shared lab is state in the room metadata, not video.** The Teacher sends the lab key and its parameters; every browser draws the same lab from them, sharp and cheap. LiveKit hands room metadata to late joiners and announces each change, so nothing is kept here. Which labs the Teacher may share is the `labs` attribute the backend signed into their token (keys separated by commas).
+- **Late joiners are replayed the chat and captions, from Redis.** Data messages reach only who is in the room when they are sent. Every chat message, deletion and caption this service publishes is also kept in a Redis list per room (the last 300 chat packets and 3 captions, gone 6 hours after the last one), and `GET /feed` replays them to a member holding that room's token. Kept here rather than read from the backend, so a replayed message still carries its signature and the same token check covers it.
 - **Who wrote a chat message is signed, not stored.** Each message carries an HMAC of its room, id and sender. Taking it down sends that back, so the service knows the author without keeping any state.
 - **A Redis outbox between this service and the backend.** Every report is buffered in a Redis list and delivered in order, so a backend restart loses nothing. Reports the backend refuses (unknown session, invalid data) are dropped; anything else is retried.
 - **Speech-to-text behind two ports.** `AudioSource` (audio of a track) and `SpeechToText` (text of a chunk) keep the pipeline independent of both LiveKit and Deepgram.
@@ -34,6 +35,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   | `POST /class/end` | none | The Teacher |
   | `POST /lab` | `{ labKey, state }` | The Teacher, for a lab listed in their token |
   | `POST /lab/stop` | none | The Teacher |
+  | `GET /feed` | none | Any member of the class; answers `{ packets: [{ topic, payload }] }`, the room's kept chat packets then captions, oldest first, or `503` when Redis cannot be read |
 - **Names:** a room is `class-<sessionId>` and a participant identity is a `Membership.id`. Rooms and participants that do not fit are ignored.
 - **Packages (`internal/`):**
   - `webhook` — verifies and dispatches `room_started`, `room_finished`, `participant_joined`, `participant_left`, `track_published`, `track_unpublished`.
@@ -43,6 +45,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   - `chat` — sending a chat message and taking one down.
   - `moderation` — hands, silencing a participant and ending a class.
   - `lab` — sharing a lab with the class, and taking it off show.
+  - `feed` — `Recorder`, which keeps what is published on `chat`, `chat-deleted` and `captions`, the Redis log, and `GET /feed`, which replays it.
   - `transcription` — `Pipeline` (one goroutine per open microphone), `Deepgram`, `MockSpeechToText`, `TimedSource` (a timer standing in for audio).
   - `backend` — report bodies, the internal API client and the Redis outbox.
   - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, participant attributes, room metadata, silencing (microphone and screen sound), closing a room, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
