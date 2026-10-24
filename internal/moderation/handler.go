@@ -47,6 +47,9 @@ func (h *Handler) reply(w http.ResponseWriter, action string, caller access.Call
 	}
 }
 
+// handTime keeps milliseconds: hands raised within the same second must still come out in order.
+const handTime = "2006-01-02T15:04:05.000Z07:00"
+
 // Hand raises or lowers the caller's own hand. The value is when it went up, so hands can be taken in order.
 func (h *Handler) Hand(w http.ResponseWriter, request *http.Request) {
 	caller, ok := access.Identify(h.auth, w, request)
@@ -65,7 +68,7 @@ func (h *Handler) Hand(w http.ResponseWriter, request *http.Request) {
 	}
 	value := ""
 	if *body.Raised {
-		value = h.now().UTC().Format(time.RFC3339)
+		value = h.now().UTC().Format(handTime)
 	}
 	err := h.room.SetAttribute(request.Context(), caller.Room, caller.Identity, room.AttributeHand, value)
 	h.reply(w, "moving a hand", caller, err)
