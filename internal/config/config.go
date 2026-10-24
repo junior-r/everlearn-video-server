@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -11,6 +12,8 @@ const (
 	TranscriptionOff      = "off"
 	TranscriptionMock     = "mock"
 	TranscriptionDeepgram = "deepgram"
+	// TranscriptionHTTP is any service speaking the contract in transcription.HTTPSpeechToText (Avra, for one).
+	TranscriptionHTTP = "http"
 )
 
 // Config is everything the service needs from its environment.
@@ -30,6 +33,9 @@ type Config struct {
 	TranscriptionProvider string
 	TranscriptionLanguage string
 	DeepgramAPIKey        string
+	// TranscriptionHTTPURL and TranscriptionHTTPToken reach the service behind TRANSCRIPTION_PROVIDER=http.
+	TranscriptionHTTPURL   string
+	TranscriptionHTTPToken string
 	// EnableSTT lets the service join rooms as a hidden participant to hear real audio.
 	EnableSTT bool
 }
@@ -52,18 +58,20 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		Port:                  optional("PORT", "8080"),
-		LiveKitURL:            httpURL(required("LIVEKIT_URL")),
-		LiveKitRoomURL:        getenv("LIVEKIT_URL"),
-		LiveKitAPIKey:         required("LIVEKIT_API_KEY"),
-		LiveKitAPISecret:      required("LIVEKIT_API_SECRET"),
-		BackendURL:            strings.TrimRight(required("BACKEND_INTERNAL_URL"), "/"),
-		InternalSecret:        required("INTERNAL_SERVICE_SECRET"),
-		RedisURL:              required("REDIS_URL"),
-		AllowedOrigin:         optional("ALLOWED_ORIGIN", "http://localhost:3000"),
-		TranscriptionProvider: optional("TRANSCRIPTION_PROVIDER", TranscriptionOff),
-		TranscriptionLanguage: optional("TRANSCRIPTION_LANGUAGE", "es"),
-		DeepgramAPIKey:        getenv("DEEPGRAM_API_KEY"),
+		Port:                   optional("PORT", "8080"),
+		LiveKitURL:             httpURL(required("LIVEKIT_URL")),
+		LiveKitRoomURL:         getenv("LIVEKIT_URL"),
+		LiveKitAPIKey:          required("LIVEKIT_API_KEY"),
+		LiveKitAPISecret:       required("LIVEKIT_API_SECRET"),
+		BackendURL:             strings.TrimRight(required("BACKEND_INTERNAL_URL"), "/"),
+		InternalSecret:         required("INTERNAL_SERVICE_SECRET"),
+		RedisURL:               required("REDIS_URL"),
+		AllowedOrigin:          optional("ALLOWED_ORIGIN", "http://localhost:3000"),
+		TranscriptionProvider:  optional("TRANSCRIPTION_PROVIDER", TranscriptionOff),
+		TranscriptionLanguage:  optional("TRANSCRIPTION_LANGUAGE", "es"),
+		DeepgramAPIKey:         getenv("DEEPGRAM_API_KEY"),
+		TranscriptionHTTPURL:   getenv("TRANSCRIPTION_HTTP_URL"),
+		TranscriptionHTTPToken: getenv("TRANSCRIPTION_HTTP_TOKEN"),
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
@@ -81,8 +89,15 @@ func Load(getenv func(string) string) (Config, error) {
 		if cfg.DeepgramAPIKey == "" {
 			return Config{}, fmt.Errorf("TRANSCRIPTION_PROVIDER=deepgram requires DEEPGRAM_API_KEY")
 		}
+	case TranscriptionHTTP:
+		if cfg.TranscriptionHTTPURL == "" || cfg.TranscriptionHTTPToken == "" {
+			return Config{}, fmt.Errorf("TRANSCRIPTION_PROVIDER=http requires TRANSCRIPTION_HTTP_URL and TRANSCRIPTION_HTTP_TOKEN")
+		}
+		if target, err := url.Parse(cfg.TranscriptionHTTPURL); err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
+			return Config{}, fmt.Errorf("TRANSCRIPTION_HTTP_URL must be an http(s) URL, got %q", cfg.TranscriptionHTTPURL)
+		}
 	default:
-		return Config{}, fmt.Errorf("TRANSCRIPTION_PROVIDER must be off, mock or deepgram, got %q", cfg.TranscriptionProvider)
+		return Config{}, fmt.Errorf("TRANSCRIPTION_PROVIDER must be off, mock, deepgram or http, got %q", cfg.TranscriptionProvider)
 	}
 	return cfg, nil
 }

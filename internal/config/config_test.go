@@ -57,6 +57,27 @@ func TestLoadChecksTheTranscriptionProvider(t *testing.T) {
 	}
 }
 
+func TestLoadChecksTheHTTPProvider(t *testing.T) {
+	for _, missing := range []map[string]string{
+		{"TRANSCRIPTION_PROVIDER": "http"},
+		{"TRANSCRIPTION_PROVIDER": "http", "TRANSCRIPTION_HTTP_URL": "https://avra.example/api/live/transcribe"},
+		{"TRANSCRIPTION_PROVIDER": "http", "TRANSCRIPTION_HTTP_TOKEN": "avra_token"},
+		{"TRANSCRIPTION_PROVIDER": "http", "TRANSCRIPTION_HTTP_URL": "avra.example", "TRANSCRIPTION_HTTP_TOKEN": "avra_token"},
+	} {
+		if _, err := Load(env(missing)); err == nil {
+			t.Errorf("accepted %v", missing)
+		}
+	}
+	cfg, err := Load(env(map[string]string{
+		"TRANSCRIPTION_PROVIDER":   "http",
+		"TRANSCRIPTION_HTTP_URL":   "https://avra.example/api/live/transcribe",
+		"TRANSCRIPTION_HTTP_TOKEN": "avra_token",
+	}))
+	if err != nil || cfg.TranscriptionHTTPURL != "https://avra.example/api/live/transcribe" || cfg.TranscriptionHTTPToken != "avra_token" {
+		t.Errorf("cfg = %+v, err = %v", cfg, err)
+	}
+}
+
 func TestLoadKeepsSpeechToTextOffUnlessEnabled(t *testing.T) {
 	if cfg, err := Load(env(nil)); err != nil || cfg.EnableSTT {
 		t.Fatalf("EnableSTT = %v, err = %v", cfg.EnableSTT, err)
