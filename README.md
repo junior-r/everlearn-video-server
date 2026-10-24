@@ -12,7 +12,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
 
 - **Webhooks for who is in a class.** Attendance and room lifecycle come from LiveKit's signed webhooks, so they work without any media connection.
 - **Chat goes through this service over HTTP.** The browser posts the message with its room access token; the service takes the sender from the token, publishes the message to the room and captures it. Browsers cannot publish data themselves, so nobody can write as someone else.
-- **Moderation goes through this service too.** A hand, a silenced microphone and the end of a class are requests carrying the same room token. Whether the caller is the Teacher is read from the role the backend signed into that token, never from the request, and browsers hold no LiveKit administration of their own.
+- **Moderation goes through this service too.** A hand, a silenced participant (microphone and screen sound) and the end of a class are requests carrying the same room token. Whether the caller is the Teacher is read from the role the backend signed into that token, never from the request, and browsers hold no LiveKit administration of their own.
 - **A shared lab is state in the room metadata, not video.** The Teacher sends the lab key and its parameters; every browser draws the same lab from them, sharp and cheap. LiveKit hands room metadata to late joiners and announces each change, so nothing is kept here. Which labs the Teacher may share is the `labs` attribute the backend signed into their token (keys separated by commas).
 - **Who wrote a chat message is signed, not stored.** Each message carries an HMAC of its room, id and sender. Taking it down sends that back, so the service knows the author without keeping any state.
 - **A Redis outbox between this service and the backend.** Every report is buffered in a Redis list and delivered in order, so a backend restart loses nothing. Reports the backend refuses (unknown session, invalid data) are dropped; anything else is retried.
@@ -41,11 +41,11 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   - `metrics` — reports when a room opens and closes.
   - `access` — who a browser request comes from, read from its room token.
   - `chat` — sending a chat message and taking one down.
-  - `moderation` — hands, silencing a microphone and ending a class.
+  - `moderation` — hands, silencing a participant and ending a class.
   - `lab` — sharing a lab with the class, and taking it off show.
   - `transcription` — `Pipeline` (one goroutine per open microphone), `Deepgram`, `MockSpeechToText`, `TimedSource` (a timer standing in for audio).
   - `backend` — report bodies, the internal API client and the Redis outbox.
-  - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, participant attributes, room metadata, muting, closing a room, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
+  - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, participant attributes, room metadata, silencing (microphone and screen sound), closing a room, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
   - `room`, `config` — naming rules and environment.
 - **To the room:** data messages on topic `chat` (`id, senderId, senderName, content, sentAt, signature`), `chat-deleted` (`id`) and `captions` (`id, speakerId, speakerName, text, startedAt, endedAt`); the participant attribute `hand` (when it went up, empty when down); and the room metadata `{ lab: { labKey, state, sharedBy, updatedAt } | null }` (the state is a JSON object of at most 8 KiB).
 - **To the backend:** `POST /internal/classroom/sessions/:id/{started|finished|participants/joined|participants/left|chat-messages|chat-messages/deleted|transcript-segments}` with `X-Internal-Secret`.

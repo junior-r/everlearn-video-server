@@ -109,8 +109,13 @@ func (c *Client) SetAttribute(ctx context.Context, roomName, identity, key, valu
 	return gone(err)
 }
 
-// MuteMicrophone silences a participant's open microphone. They may open it again themselves.
-func (c *Client) MuteMicrophone(ctx context.Context, roomName, identity string) error {
+// isHeard tells whether a track carries sound the room hears: a microphone or a shared screen's audio.
+func isHeard(source livekit.TrackSource) bool {
+	return source == livekit.TrackSource_MICROPHONE || source == livekit.TrackSource_SCREEN_SHARE_AUDIO
+}
+
+// Silence mutes every open track of a participant the room hears. They may open their microphone again themselves.
+func (c *Client) Silence(ctx context.Context, roomName, identity string) error {
 	ctx, err := c.asServer(ctx, &auth.VideoGrant{RoomAdmin: true, Room: roomName})
 	if err != nil {
 		return err
@@ -120,7 +125,7 @@ func (c *Client) MuteMicrophone(ctx context.Context, roomName, identity string) 
 		return gone(err)
 	}
 	for _, track := range participant.GetTracks() {
-		if track.GetSource() != livekit.TrackSource_MICROPHONE || track.GetMuted() {
+		if !isHeard(track.GetSource()) || track.GetMuted() {
 			continue
 		}
 		_, err := c.rooms.MutePublishedTrack(ctx, &livekit.MuteRoomTrackRequest{
