@@ -1,6 +1,7 @@
 name: Publish Docker image
 
-# Builds the production image and pushes it to the GitHub Container Registry on every push to main
+# Builds the production image and pushes it to the GitHub Container Registry on every push to main,
+# then deploys it to the server once a reviewer approves (Settings > Environments > production)
 on:
   push:
     branches: [main]
@@ -52,3 +53,29 @@ jobs:
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://everlearn.juniorz.dev
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Deploy this commit's image
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          PORT: ${{ vars.DEPLOY_PORT }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # This key only runs the server's deploy script, for this service; the words below are its arguments
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "deploy@$HOST" "video-server sha-${{ github.sha }}"
