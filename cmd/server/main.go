@@ -17,6 +17,7 @@ import (
 	"github.com/everlearn/video-server/internal/backend"
 	"github.com/everlearn/video-server/internal/chat"
 	"github.com/everlearn/video-server/internal/config"
+	"github.com/everlearn/video-server/internal/feed"
 	"github.com/everlearn/video-server/internal/lab"
 	"github.com/everlearn/video-server/internal/metrics"
 	"github.com/everlearn/video-server/internal/moderation"
@@ -63,7 +64,10 @@ func run(logger *slog.Logger) error {
 	}()
 
 	livekit := sfu.NewClient(cfg.LiveKitURL, cfg.LiveKitAPIKey, cfg.LiveKitAPISecret)
-	captions := newCaptions(livekit, outbox, logger)
+	feedLog := feed.NewRedisLog(redisClient)
+	// Chat and captions are also kept, for whoever joins the room after they were said
+	published := feed.NewRecorder(livekit, feedLog, logger)
+	captions := newCaptions(published, outbox, logger)
 	pipeline := newPipeline(cfg, livekit, captions.publish, logger)
 	classes := &classroom{
 		rooms:      metrics.NewRooms(outbox),
@@ -76,7 +80,7 @@ func run(logger *slog.Logger) error {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("POST /webhooks/livekit", webhook.NewHandler(livekit.ReceiveWebhook, classes, logger))
-	messages := chat.NewHandler(livekit, livekit, outbox, []byte(cfg.LiveKitAPISecret), logger)
+	messages := chat.NewHandler(livekit, published, outbox, []byte(cfg.LiveKitAPISecret), logger)
 	order := moderation.NewHandler(livekit, livekit, logger)
 	labs := lab.NewHandler(livekit, livekit, logger)
 	for path, handler := range map[string]http.HandlerFunc{
@@ -89,8 +93,9 @@ func run(logger *slog.Logger) error {
 		"/lab":                     labs.Share,
 		"/lab/stop":                labs.Stop,
 	} {
-		mux.Handle(path, browserAccess(cfg.AllowedOrigin, handler))
+		mux.Handle(path, browserAccess(cfg.AllowedOrigin, http.MethodPost, handler))
 	}
+	mux.Handle("/feed", browserAccess(cfg.AllowedOrigin, http.MethodGet, feed.NewHandler(livekit, feedLog, logger)))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -149,18 +154,18 @@ func newPipeline(cfg config.Config, livekit *sfu.Client, sink transcription.Sink
 	return transcription.NewPipeline(source, stt, sink, cfg.TranscriptionLanguage, logger)
 }
 
-// browserAccess lets the frontend origin call a handler from a browser, and only with POST.
-func browserAccess(origin string, next http.Handler) http.Handler {
+// browserAccess lets the frontend origin call a handler from a browser, and only with the given method.
+func browserAccess(origin, method string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 		switch request.Method {
 		case http.MethodOptions:
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.Header().Set("Access-Control-Allow-Methods", method)
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
-		case http.MethodPost:
+		case method:
 			next.ServeHTTP(w, request)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)

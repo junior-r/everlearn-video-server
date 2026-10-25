@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/livekit/protocol/auth"
+	"github.com/livekit/protocol/livekit"
 )
 
 const (
@@ -164,5 +165,19 @@ func TestReceiveWebhookAcceptsOnlyWhatLiveKitSigned(t *testing.T) {
 	unsigned := httptest.NewRequest(http.MethodPost, "/webhooks/livekit", bytes.NewReader(body))
 	if _, err := client.ReceiveWebhook(unsigned); err == nil {
 		t.Error("accepted an unsigned webhook")
+	}
+}
+
+func TestSilencingReachesTheMicrophoneAndTheSoundOfAScreen(t *testing.T) {
+	heard := map[livekit.TrackSource]bool{
+		livekit.TrackSource_MICROPHONE:         true,
+		livekit.TrackSource_SCREEN_SHARE_AUDIO: true,
+		livekit.TrackSource_CAMERA:             false,
+		livekit.TrackSource_SCREEN_SHARE:       false,
+	}
+	for source, want := range heard {
+		if got := isHeard(source); got != want {
+			t.Errorf("isHeard(%v) = %v, want %v", source, got, want)
+		}
 	}
 }

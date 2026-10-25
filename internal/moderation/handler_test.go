@@ -40,7 +40,7 @@ func (s *stubs) SetAttribute(_ context.Context, roomName, identity, key, value s
 	return s.err
 }
 
-func (s *stubs) MuteMicrophone(_ context.Context, roomName, identity string) error {
+func (s *stubs) Silence(_ context.Context, roomName, identity string) error {
 	s.calls = append(s.calls, "mute "+roomName+" "+identity)
 	return s.err
 }

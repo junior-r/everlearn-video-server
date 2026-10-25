@@ -1,5 +1,5 @@
 // Package moderation lets a member raise their hand, and the Teacher of a class keep order in it:
-// lower a hand, silence a microphone and end the class for everyone.
+// lower a hand, silence a participant and end the class for everyone.
 package moderation
 
 import (
@@ -16,7 +16,7 @@ import (
 // Room is what moderating needs from the video server.
 type Room interface {
 	SetAttribute(ctx context.Context, roomName, identity, key, value string) error
-	MuteMicrophone(ctx context.Context, roomName, identity string) error
+	Silence(ctx context.Context, roomName, identity string) error
 	Close(ctx context.Context, roomName string) error
 }
 
@@ -117,13 +117,13 @@ func (h *Handler) LowerHand(w http.ResponseWriter, request *http.Request) {
 	h.reply(w, "lowering a hand", caller, err)
 }
 
-// Mute silences a participant's microphone. Only the Teacher may.
+// Mute silences a participant: their microphone and the sound of a screen they share. Only the Teacher may.
 func (h *Handler) Mute(w http.ResponseWriter, request *http.Request) {
 	caller, identity, ok := h.teacherAndTarget(w, request)
 	if !ok {
 		return
 	}
-	h.reply(w, "muting a microphone", caller, h.room.MuteMicrophone(request.Context(), caller.Room, identity))
+	h.reply(w, "silencing a participant", caller, h.room.Silence(request.Context(), caller.Room, identity))
 }
 
 // End closes the class for everyone. Only the Teacher may.
