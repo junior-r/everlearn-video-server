@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"time"
 
 	"github.com/livekit/protocol/auth"
@@ -21,6 +22,7 @@ type Client struct {
 	apiKey    string
 	apiSecret string
 	rooms     livekit.RoomService
+	egress    livekit.Egress
 }
 
 // NewClient builds a client for the LiveKit server API at httpURL.
@@ -29,6 +31,8 @@ func NewClient(httpURL, apiKey, apiSecret string) *Client {
 		apiKey:    apiKey,
 		apiSecret: apiSecret,
 		rooms:     livekit.NewRoomServiceProtobufClient(httpURL, &http.Client{Timeout: 10 * time.Second}),
+		// Starting a recording waits for Egress to open Chrome and join the room
+		egress: livekit.NewEgressProtobufClient(httpURL, &http.Client{Timeout: 45 * time.Second}),
 	}
 }
 
@@ -59,6 +63,8 @@ func (c *Client) Authenticate(token string) (room.Member, error) {
 		Name:     grants.Name,
 		Teacher:  grants.Attributes[room.AttributeRole] == room.RoleTeacher,
 		Labs:     room.ParseLabs(grants.Attributes[room.AttributeLabs]),
+		CanRecord: grants.Attributes[room.AttributeRole] == room.RoleTeacher &&
+			grants.Attributes[room.AttributeRecord] == "true",
 	}, nil
 }
 
@@ -158,5 +164,58 @@ func (c *Client) SetMetadata(ctx context.Context, roomName, metadata string) err
 		return err
 	}
 	_, err = c.rooms.UpdateRoomMetadata(ctx, &livekit.UpdateRoomMetadataRequest{Room: roomName, Metadata: metadata})
+	return gone(err)
+}
+
+// recordingPreset keeps a shared screen legible at about 3 Mbit/s, some 1.4 GB per hour of class.
+const recordingPreset = livekit.EncodingOptionsPreset_H264_720P_30
+
+// StartRecording has Egress film the whole room into one MP4 at filepath, on Egress's own disk: every
+// camera and shared screen in the speaker layout, with every microphone and screen sound mixed in.
+func (c *Client) StartRecording(ctx context.Context, roomName, filepath string) error {
+	if path.Ext(filepath) != ".mp4" {
+		return fmt.Errorf("a recording is an .mp4 file, got %q", filepath)
+	}
+	ctx, err := c.asServer(ctx, &auth.VideoGrant{RoomRecord: true})
+	if err != nil {
+		return err
+	}
+	_, err = c.egress.StartRoomCompositeEgress(ctx, &livekit.RoomCompositeEgressRequest{
+		RoomName: roomName,
+		Layout:   "speaker",
+		Options:  &livekit.RoomCompositeEgressRequest_Preset{Preset: recordingPreset},
+		FileOutputs: []*livekit.EncodedFileOutput{{
+			FileType:        livekit.EncodedFileType_MP4,
+			Filepath:        filepath,
+			DisableManifest: true,
+		}},
+	})
+	return gone(err)
+}
+
+// ActiveRecordings returns the ids of the recordings of a room still in progress.
+func (c *Client) ActiveRecordings(ctx context.Context, roomName string) ([]string, error) {
+	ctx, err := c.asServer(ctx, &auth.VideoGrant{RoomRecord: true})
+	if err != nil {
+		return nil, err
+	}
+	list, err := c.egress.ListEgress(ctx, &livekit.ListEgressRequest{RoomName: roomName, Active: true})
+	if err != nil {
+		return nil, gone(err)
+	}
+	ids := make([]string, 0, len(list.GetItems()))
+	for _, item := range list.GetItems() {
+		ids = append(ids, item.GetEgressId())
+	}
+	return ids, nil
+}
+
+// StopRecording ends a recording; Egress then finishes its file and LiveKit reports egress_ended.
+func (c *Client) StopRecording(ctx context.Context, egressID string) error {
+	ctx, err := c.asServer(ctx, &auth.VideoGrant{RoomRecord: true})
+	if err != nil {
+		return err
+	}
+	_, err = c.egress.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: egressID})
 	return gone(err)
 }

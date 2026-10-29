@@ -86,3 +86,15 @@ func TranscriptSegment(sessionID, id, speakerID, text, language string, startedA
 		"endedAt":   stamp(endedAt),
 	})
 }
+
+// Recording reports a finished recording of a session: a file Egress left in the spool, named relative to it.
+// The Egress id makes a retried delivery harmless.
+func Recording(sessionID, egressID, file string, startedAt, endedAt time.Time, sizeBytes int64) Report {
+	return report(sessionID, "recordings", map[string]any{
+		"egressId":  egressID,
+		"file":      file,
+		"startedAt": stamp(startedAt),
+		"endedAt":   stamp(endedAt),
+		"sizeBytes": sizeBytes,
+	})
+}

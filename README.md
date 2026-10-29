@@ -19,6 +19,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
 - **A Redis outbox between this service and the backend.** Every report is buffered in a Redis list and delivered in order, so a backend restart loses nothing. Reports the backend refuses (unknown session, invalid data) are dropped; anything else is retried.
 - **Speech-to-text behind two ports.** `AudioSource` (audio of a track) and `SpeechToText` (text of a chunk) keep the pipeline independent of both LiveKit and Deepgram.
 - **A hidden participant for audio, behind a switch.** Hearing what is said needs a WebRTC connection, which webhooks cannot give. The service joins the room with the LiveKit server SDK as a hidden agent that subscribes only to microphones. `ENABLE_STT` (default `false`) guards it: while off, no room is ever joined, so a network without media reachability or a missing API key cannot break a class.
+- **Recording through LiveKit Egress.** A room composite films the room from a hidden Chrome in the speaker layout: every camera and shared screen, every microphone and screen sound mixed in, as one MP4 (H.264 720p, about 1.4 GB per hour). This service only asks Egress to start and stop, names the file (`<RECORDINGS_DIR>/<session id>/<uuid>.mp4`, never from a browser) and, on `egress_ended`, reports it to the backend relative to the spool, which then stores it wherever the deployment keeps recordings. Only a Teacher whose token the backend signed with `record=true` may start one.
 - **Audio is sent to Deepgram in 6-second Ogg/Opus files.** Opus packets are copied into an Ogg container as they arrive, with no decoding. Captions lag speech by about that long; a streaming connection would lower it at the cost of a socket per speaker.
 
 ## The Implementation
@@ -35,24 +36,27 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   | `POST /class/end` | none | The Teacher |
   | `POST /lab` | `{ labKey, state }` | The Teacher, for a lab listed in their token |
   | `POST /lab/stop` | none | The Teacher |
+  | `POST /recording/start` | none | The Teacher, when their token says `record=true`; a class already recorded is left as it is |
+  | `POST /recording/stop` | none | The same; stops every recording of the class in progress |
   | `GET /feed` | none | Any member of the class; answers `{ packets: [{ topic, payload }] }`, the room's kept chat packets then captions, oldest first, or `503` when Redis cannot be read |
 - **Names:** a room is `class-<sessionId>` and a participant identity is a `Membership.id`. Rooms and participants that do not fit are ignored.
 - **Packages (`internal/`):**
-  - `webhook` — verifies and dispatches `room_started`, `room_finished`, `participant_joined`, `participant_left`, `track_published`, `track_unpublished`.
+  - `webhook` — verifies and dispatches `room_started`, `room_finished`, `participant_joined`, `participant_left`, `track_published`, `track_unpublished`, `egress_ended`.
   - `attendance` — reports each join and leave, and adds up each member's seconds in the session.
   - `metrics` — reports when a room opens and closes.
   - `access` — who a browser request comes from, read from its room token.
   - `chat` — sending a chat message and taking one down.
   - `moderation` — hands, silencing a participant and ending a class.
   - `lab` — sharing a lab with the class, and taking it off show.
+  - `recording` — starting and stopping the recording of a class, and reporting each finished file (`Archive`).
   - `feed` — `Recorder`, which keeps what is published on `chat`, `chat-deleted` and `captions`, the Redis log, and `GET /feed`, which replays it.
   - `transcription` — `Pipeline` (one goroutine per open microphone), `Deepgram`, `MockSpeechToText`, `TimedSource` (a timer standing in for audio).
   - `backend` — report bodies, the internal API client and the Redis outbox.
-  - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, participant attributes, room metadata, silencing (microphone and screen sound), closing a room, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
+  - `sfu` — the LiveKit adapter: webhook and token verification, publishing data to a room, participant attributes, room metadata, silencing (microphone and screen sound), closing a room, starting, listing and stopping Egress recordings, and `Listener`, the `AudioSource` that joins a room as `everlearn-listener` and cuts each microphone into chunks. It leaves when the last microphone it hears closes.
   - `room`, `config` — naming rules and environment.
 - **To the room:** data messages on topic `chat` (`id, senderId, senderName, content, sentAt, signature`), `chat-deleted` (`id`) and `captions` (`id, speakerId, speakerName, text, startedAt, endedAt`); the participant attribute `hand` (when it went up, empty when down); and the room metadata `{ lab: { labKey, state, sharedBy, updatedAt } | null }` (the state is a JSON object of at most 8 KiB).
-- **To the backend:** `POST /internal/classroom/sessions/:id/{started|finished|participants/joined|participants/left|chat-messages|chat-messages/deleted|transcript-segments}` with `X-Internal-Secret`.
-- **Config:** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `BACKEND_INTERNAL_URL`, `INTERNAL_SERVICE_SECRET`, `REDIS_URL`, `ALLOWED_ORIGIN`, `TRANSCRIPTION_PROVIDER` (`off` default, `mock`, `deepgram`, `http`), `TRANSCRIPTION_LANGUAGE` (`es`), `DEEPGRAM_API_KEY`, `TRANSCRIPTION_HTTP_URL` and `TRANSCRIPTION_HTTP_TOKEN` (for `http`), `ENABLE_STT` (`false` default).
+- **To the backend:** `POST /internal/classroom/sessions/:id/{started|finished|participants/joined|participants/left|chat-messages|chat-messages/deleted|transcript-segments|recordings}` with `X-Internal-Secret`.
+- **Config:** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `BACKEND_INTERNAL_URL`, `INTERNAL_SERVICE_SECRET`, `REDIS_URL`, `ALLOWED_ORIGIN`, `TRANSCRIPTION_PROVIDER` (`off` default, `mock`, `deepgram`, `http`), `TRANSCRIPTION_LANGUAGE` (`es`), `DEEPGRAM_API_KEY`, `TRANSCRIPTION_HTTP_URL` and `TRANSCRIPTION_HTTP_TOKEN` (for `http`), `ENABLE_STT` (`false` default), `RECORDINGS_DIR` (`/recordings`: where Egress writes, as Egress sees its disk).
 - **Transcription modes:**
 
   | `ENABLE_STT` | `TRANSCRIPTION_PROVIDER` | Result |
@@ -71,7 +75,7 @@ A small Go service that listens to LiveKit, applies the video business logic, an
   Content-Type: audio/ogg          (the chunk: 6 s of Opus, as the browser sent it)
   → 200 {"text": "..."}            (empty text: nothing was said; any other status: logged, chunk skipped)
   ```
-- **LiveKit side:** `livekit.yaml` lists this service under `webhook.urls`.
+- **LiveKit side:** `livekit.yaml` lists this service under `webhook.urls` and connects to Redis, which is how LiveKit reaches Egress. Egress (`livekit/egress`) runs beside it with the same API key and Redis, and writes to the spool volume the backend also mounts.
 
 ## Running
 
@@ -93,3 +97,4 @@ docker build --target test ./video-server                         # go vet + go 
 - Chat signatures are made with the LiveKit API secret: rotating it makes the messages of classes in progress impossible to take down.
 - A chat message is shown before it is buffered: if Redis is down at that moment it is logged but not saved.
 - The webhook API key in `livekit.yaml` is the development key; production needs its own file.
+- A recording that fails before Egress writes anything is only logged here (`a recording ended without a file`).

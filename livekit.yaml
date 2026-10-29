@@ -6,6 +6,9 @@ rtc:
   use_external_ip: false
 logging:
   level: info
+# Shared with Egress, which records classes
+redis:
+  address: redis:6379
 # Room and participant events go to the video-server, signed with this key's secret
 webhook:
   api_key: devkey

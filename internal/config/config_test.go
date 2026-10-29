@@ -90,3 +90,14 @@ func TestLoadKeepsSpeechToTextOffUnlessEnabled(t *testing.T) {
 		t.Error("an unreadable ENABLE_STT was accepted")
 	}
 }
+
+func TestLoadChecksTheRecordingsDirectory(t *testing.T) {
+	if cfg, err := Load(env(nil)); err != nil || cfg.RecordingsDir != "/recordings" {
+		t.Fatalf("RecordingsDir = %q, err = %v", cfg.RecordingsDir, err)
+	}
+	for _, dir := range []string{"recordings", "/"} {
+		if _, err := Load(env(map[string]string{"RECORDINGS_DIR": dir})); err == nil {
+			t.Errorf("RECORDINGS_DIR=%q was accepted", dir)
+		}
+	}
+}

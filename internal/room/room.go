@@ -21,7 +21,9 @@ const (
 	AttributeHand = "hand"
 	// AttributeLabs lists, comma separated, the labs the backend lets the Teacher share with the class.
 	AttributeLabs = "labs"
-	RoleTeacher   = "TEACHER"
+	// AttributeRecord is "true" when the backend lets the Teacher record the class.
+	AttributeRecord = "record"
+	RoleTeacher     = "TEACHER"
 )
 
 // ErrNotInRoom is returned when a participant, or the room itself, is no longer there.
@@ -36,6 +38,8 @@ type Member struct {
 	Teacher bool
 	// Labs are the keys of the labs this member may share with the room; empty for anyone but the Teacher.
 	Labs []string
+	// CanRecord is true when the backend lets this member record the class; never for a Student.
+	CanRecord bool
 }
 
 // The backend names a session's room "class-<session id>".

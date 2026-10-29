@@ -98,6 +98,31 @@ func TestAuthenticateReadsTheLabsTheTeacherMayShare(t *testing.T) {
 	}
 }
 
+func TestAuthenticateLetsOnlyATeacherTheBackendAllowedRecord(t *testing.T) {
+	client := NewClient("http://livekit.invalid", apiKey, apiSecret)
+	cases := map[string]struct {
+		attributes map[string]string
+		want       bool
+	}{
+		"the Teacher, allowed":     {map[string]string{"role": "TEACHER", "record": "true"}, true},
+		"the Teacher, not allowed": {map[string]string{"role": "TEACHER"}, false},
+		"a Student with the flag":  {map[string]string{"role": "STUDENT", "record": "true"}, false},
+	}
+	for name, c := range cases {
+		member, err := client.Authenticate(backendTokenWith(t, time.Now().Add(time.Hour), c.attributes))
+		if err != nil || member.CanRecord != c.want {
+			t.Errorf("%s: member = %+v, err = %v", name, member, err)
+		}
+	}
+}
+
+func TestStartRecordingWritesOnlyMP4Files(t *testing.T) {
+	client := NewClient("http://livekit.invalid", apiKey, apiSecret)
+	if err := client.StartRecording(t.Context(), "class-1", "/recordings/a.json"); err == nil {
+		t.Fatal("a recording that is not an .mp4 was started")
+	}
+}
+
 func TestAuthenticateAcceptsOnlyRoomTokensSignedWithOurSecret(t *testing.T) {
 	client := NewClient("http://livekit.invalid", apiKey, apiSecret)
 	join := &auth.VideoGrant{RoomJoin: true, Room: "class-1"}

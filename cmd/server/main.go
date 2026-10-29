@@ -21,6 +21,7 @@ import (
 	"github.com/everlearn/video-server/internal/lab"
 	"github.com/everlearn/video-server/internal/metrics"
 	"github.com/everlearn/video-server/internal/moderation"
+	"github.com/everlearn/video-server/internal/recording"
 	"github.com/everlearn/video-server/internal/sfu"
 	"github.com/everlearn/video-server/internal/transcription"
 	"github.com/everlearn/video-server/internal/webhook"
@@ -73,6 +74,7 @@ func run(logger *slog.Logger) error {
 		rooms:      metrics.NewRooms(outbox),
 		attendance: attendance.NewRecorder(attendance.NewTracker(), outbox, logger),
 		transcript: pipeline,
+		recordings: recording.NewArchive(outbox, cfg.RecordingsDir, logger),
 	}
 
 	mux := http.NewServeMux()
@@ -83,6 +85,7 @@ func run(logger *slog.Logger) error {
 	messages := chat.NewHandler(livekit, published, outbox, []byte(cfg.LiveKitAPISecret), logger)
 	order := moderation.NewHandler(livekit, livekit, logger)
 	labs := lab.NewHandler(livekit, livekit, logger)
+	recordings := recording.NewHandler(livekit, livekit, cfg.RecordingsDir, logger)
 	for path, handler := range map[string]http.HandlerFunc{
 		"/chat":                    messages.ServeHTTP,
 		"/chat/delete":             messages.Delete,
@@ -92,6 +95,8 @@ func run(logger *slog.Logger) error {
 		"/class/end":               order.End,
 		"/lab":                     labs.Share,
 		"/lab/stop":                labs.Stop,
+		"/recording/start":         recordings.Start,
+		"/recording/stop":          recordings.Stop,
 	} {
 		mux.Handle(path, browserAccess(cfg.AllowedOrigin, http.MethodPost, handler))
 	}

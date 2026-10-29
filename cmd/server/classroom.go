@@ -9,6 +9,7 @@ import (
 	"github.com/everlearn/video-server/internal/attendance"
 	"github.com/everlearn/video-server/internal/backend"
 	"github.com/everlearn/video-server/internal/metrics"
+	"github.com/everlearn/video-server/internal/recording"
 	"github.com/everlearn/video-server/internal/room"
 	"github.com/everlearn/video-server/internal/transcription"
 	"github.com/everlearn/video-server/internal/webhook"
@@ -20,6 +21,7 @@ type classroom struct {
 	attendance *attendance.Recorder
 	// Nil when transcription is off
 	transcript *transcription.Pipeline
+	recordings *recording.Archive
 }
 
 func (c *classroom) RoomStarted(ctx context.Context, sessionID string, at time.Time) error {
@@ -74,6 +76,10 @@ func (c *classroom) MicrophoneClosed(_ context.Context, microphone webhook.Micro
 		c.transcript.Stop(microphone.TrackSID)
 	}
 	return nil
+}
+
+func (c *classroom) RecordingFinished(ctx context.Context, finished webhook.Recording) error {
+	return c.recordings.Finished(ctx, recording.File(finished))
 }
 
 // roomPublisher delivers a data message to everyone in a room.
