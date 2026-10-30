@@ -54,6 +54,10 @@ func (r *recorder) MicrophoneClosed(_ context.Context, m Microphone) error {
 	return r.note("mic-off %s %s", m.SessionID, m.TrackSID)
 }
 
+func (r *recorder) RecordingFinished(_ context.Context, rec Recording) error {
+	return r.note("recorded %s %s %s %d %d %d", rec.SessionID, rec.EgressID, rec.Path, rec.StartedAt.Unix(), rec.EndedAt.Unix(), rec.SizeBytes)
+}
+
 func deliver(listener *recorder, event *livekit.WebhookEvent, receiveErr error) int {
 	receive := func(*http.Request) (*livekit.WebhookEvent, error) { return event, receiveErr }
 	handler := NewHandler(receive, listener, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -143,5 +147,33 @@ func TestRejectsUnsignedWebhooksAndAsksForRedeliveryOnFailure(t *testing.T) {
 	event := &livekit.WebhookEvent{Event: "participant_joined", Room: classRoom(), Participant: student()}
 	if status := deliver(failing, event, nil); status != http.StatusInternalServerError {
 		t.Errorf("failed handling: status %d, want 500", status)
+	}
+}
+
+func TestPassesOnTheFileOfAFinishedRecording(t *testing.T) {
+	ended := func(status livekit.EgressStatus, files ...*livekit.FileInfo) *livekit.WebhookEvent {
+		return &livekit.WebhookEvent{Event: "egress_ended", EgressInfo: &livekit.EgressInfo{
+			EgressId: "EG_1", RoomName: "class-" + session, Status: status, FileResults: files,
+		}}
+	}
+	file := &livekit.FileInfo{Filename: "/recordings/" + session + "/a.mp4", StartedAt: 1000e9, EndedAt: 4600e9, Size: 2048}
+	empty := &livekit.FileInfo{Filename: "/recordings/" + session + "/b.mp4"}
+	cases := []struct {
+		event *livekit.WebhookEvent
+		want  []string
+	}{
+		{ended(livekit.EgressStatus_EGRESS_COMPLETE, file), []string{"recorded " + session + " EG_1 /recordings/" + session + "/a.mp4 1000 4600 2048"}},
+		{ended(livekit.EgressStatus_EGRESS_FAILED, empty, file), []string{"recorded " + session + " EG_1 /recordings/" + session + "/a.mp4 1000 4600 2048"}},
+		{ended(livekit.EgressStatus_EGRESS_FAILED, empty), nil},
+		{&livekit.WebhookEvent{Event: "egress_ended", EgressInfo: &livekit.EgressInfo{RoomName: "lobby", FileResults: []*livekit.FileInfo{file}}}, nil},
+	}
+	for _, c := range cases {
+		listener := &recorder{}
+		if code := deliver(listener, c.event, nil); code != http.StatusOK {
+			t.Fatalf("status = %d", code)
+		}
+		if fmt.Sprint(listener.calls) != fmt.Sprint(c.want) {
+			t.Errorf("calls = %v, want %v", listener.calls, c.want)
+		}
 	}
 }

@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 )
 
@@ -38,6 +39,8 @@ type Config struct {
 	TranscriptionHTTPToken string
 	// EnableSTT lets the service join rooms as a hidden participant to hear real audio.
 	EnableSTT bool
+	// RecordingsDir is where Egress writes recordings, as Egress sees its disk.
+	RecordingsDir string
 }
 
 // Load reads the configuration through getenv and fails on a missing or inconsistent value.
@@ -72,6 +75,7 @@ func Load(getenv func(string) string) (Config, error) {
 		DeepgramAPIKey:         getenv("DEEPGRAM_API_KEY"),
 		TranscriptionHTTPURL:   getenv("TRANSCRIPTION_HTTP_URL"),
 		TranscriptionHTTPToken: getenv("TRANSCRIPTION_HTTP_TOKEN"),
+		RecordingsDir:          optional("RECORDINGS_DIR", "/recordings"),
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
@@ -82,6 +86,9 @@ func Load(getenv func(string) string) (Config, error) {
 	case "false", "0":
 	default:
 		return Config{}, fmt.Errorf("ENABLE_STT must be true or false, got %q", getenv("ENABLE_STT"))
+	}
+	if !path.IsAbs(cfg.RecordingsDir) || path.Clean(cfg.RecordingsDir) == "/" {
+		return Config{}, fmt.Errorf("RECORDINGS_DIR must be an absolute directory other than /, got %q", cfg.RecordingsDir)
 	}
 	switch cfg.TranscriptionProvider {
 	case TranscriptionOff, TranscriptionMock:

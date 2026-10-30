@@ -20,6 +20,7 @@ const (
 	eventParticipantLeft   = "participant_left"
 	eventTrackPublished    = "track_published"
 	eventTrackUnpublished  = "track_unpublished"
+	eventEgressEnded       = "egress_ended"
 )
 
 // Participant is one connection of a member to a class session.
@@ -39,6 +40,17 @@ type Microphone struct {
 	TrackSID    string
 }
 
+// Recording is a file Egress finished writing for a class.
+type Recording struct {
+	SessionID string
+	EgressID  string
+	// Path is where Egress wrote it, as Egress sees its disk.
+	Path      string
+	StartedAt time.Time
+	EndedAt   time.Time
+	SizeBytes int64
+}
+
 // Listener reacts to what happens in class rooms. An error makes LiveKit deliver the event again.
 type Listener interface {
 	RoomStarted(ctx context.Context, sessionID string, at time.Time) error
@@ -47,6 +59,7 @@ type Listener interface {
 	ParticipantLeft(ctx context.Context, participant Participant, at time.Time) error
 	MicrophoneOpened(ctx context.Context, microphone Microphone) error
 	MicrophoneClosed(ctx context.Context, microphone Microphone) error
+	RecordingFinished(ctx context.Context, recording Recording) error
 }
 
 // Receiver authenticates a webhook request and decodes its event.
@@ -80,6 +93,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 }
 
 func (h *Handler) dispatch(ctx context.Context, event *livekit.WebhookEvent) error {
+	if event.GetEvent() == eventEgressEnded {
+		return h.egressEnded(ctx, event.GetEgressInfo())
+	}
 	sessionID, ok := room.SessionID(event.GetRoom().GetName())
 	if !ok {
 		// A room this platform did not create
@@ -118,6 +134,30 @@ func (h *Handler) dispatch(ctx context.Context, event *livekit.WebhookEvent) err
 		}
 		return h.listener.MicrophoneClosed(ctx, microphone)
 	}
+	return nil
+}
+
+// egressEnded passes on the file of a finished recording. One that failed before writing anything is only logged.
+func (h *Handler) egressEnded(ctx context.Context, egress *livekit.EgressInfo) error {
+	sessionID, ok := room.SessionID(egress.GetRoomName())
+	if !ok {
+		return nil
+	}
+	for _, file := range egress.GetFileResults() {
+		if file.GetSize() <= 0 {
+			continue
+		}
+		// A file cut short by a failure still holds the class up to that moment, so it is kept too
+		return h.listener.RecordingFinished(ctx, Recording{
+			SessionID: sessionID,
+			EgressID:  egress.GetEgressId(),
+			Path:      file.GetFilename(),
+			StartedAt: time.Unix(0, file.GetStartedAt()),
+			EndedAt:   time.Unix(0, file.GetEndedAt()),
+			SizeBytes: file.GetSize(),
+		})
+	}
+	h.log.Warn("a recording ended without a file", "session", sessionID, "status", egress.GetStatus().String(), "error", egress.GetError())
 	return nil
 }
 
